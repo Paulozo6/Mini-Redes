@@ -1,2 +1,2 @@
 # Mini Redes
-Projeto de redes de computadores
+Repositório criado para um projeto de redes de computadores
