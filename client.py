@@ -52,11 +52,11 @@ def iniciar_cliente():
                     segmento = quadro_dict['data']['data']
                     
                     if segmento['is_ack'] and segmento['seq_num'] == seq_num:
-                        print('ACK recebido!')
+                        print('\033[92m[CLIENTE] ACK recebido!\033[0m')
                         ack_recebido = True
                         seq_num = 1 - seq_num
             except socket.timeout:
-                print("Timeout! Retransmitindo....")
+                print("\033[91m[CLIENTE] Timeout! Retransmitindo....\033[0m")
     print("Encerrando cliente.")
     
 if __name__ == "__main__":

@@ -1,12 +1,10 @@
 import subprocess
 import time
 import sys
-import os
+
 
 def iniciar():
-    CREATE_NEW_CONSOLE = 0x00000010 
-    
-    print("-----Iniciando Simulação-----")
+    print("-----Iniciando Simulação Mini-NET-----")
     
     print("[SISTEMA] Iniciando roteador em nova janela...")
     subprocess.Popen("start cmd /k \"title Roteador & python router.py\"", shell=True)

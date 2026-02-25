@@ -1,5 +1,4 @@
 import socket
-import json
 from datetime import datetime
 from protocol import Segmento, Pacote, Quadro, enviar_pela_rede_ruidosa
 
@@ -18,13 +17,11 @@ while True:
     quadro_dict, integro = Quadro.deserializar(dados_brutos)
     
     if not integro: 
-        print("(ERRO DE CRC) Quadro corrompido recebido. Ignorando...")
+        print("\033[91m[ERRO DE CRC] Quadro corrompido recebido. Ignorando...\033[0m")
         continue
     
     pacote_dict = quadro_dict['data']
     segmento_dict = pacote_dict['data']
-    msg_vinda_de = pacote_dict['src_vip']
-    payload = segmento_dict['payload']
     seq_recebida = segmento_dict['seq_num']
     
     print(f"Recebido Seq {seq_recebida}. Enviando ACK...")
@@ -33,15 +30,16 @@ while True:
     ack_pac = Pacote(src_vip = "SERVIDOR", dst_vip = "CLIENTE", ttl = 64, segmento_dict = ack_seg.to_dict())
     ack_qua = Quadro(src_mac = "MAC_SVR", dst_mac = "MAC_ROUTER", pacote_dict = ack_pac.to_dict())
     
-    print(f'Mensagem  {msg_vinda_de} recebida. Enviando ACK {seq_recebida}')
+    print(f"\033[92m[SERVIDOR] Seq {seq_recebida} recebida. Enviando ACK.\033[0m")
     
     bytes_enviar = ack_qua.serializar()
     enviar_pela_rede_ruidosa(server, bytes_enviar, ROUTER_ADDR)
     
     if seq_recebida != ultimo_seq_recebido:
+        payload = segmento_dict['payload']
         print("Nova mensagem recebida:")
         hora = datetime.now().strftime('%H:%M:%S')
-        print(f"[{payload['sender']} - {hora}] {payload['message']}")
+        print(f"\033[94m[{payload['sender']} - {hora}] {payload['message']}\033[0m")
         ultimo_seq_recebido = seq_recebida
     else:
-        print("Mensagem duplicada recebida. Ignorando conteúdo.")
+        print("[SERVIDOR] Mensagem duplicada recebida. Ignorando conteúdo.")
