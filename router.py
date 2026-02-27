@@ -1,9 +1,7 @@
 import socket
-from protocol import Segmento, Pacote, Quadro, enviar_pela_rede_ruidosa
+from protocol import Quadro, enviar_pela_rede_ruidosa
 
-ROUTTER_IP = '127.0.0.1'
-ROUTTER_PORT = 7000
-ROUTTER_ADDR = (ROUTTER_IP, ROUTTER_PORT)
+ROUTER_ADDR = ('127.0.0.1', 7000)
 
 tabela_roteamento = {
     "SERVIDOR": ("127.0.0.1", 5000),
@@ -12,45 +10,46 @@ tabela_roteamento = {
 }
 
 router_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-router_socket.bind(ROUTTER_ADDR)
 
-print(f"Roteador iniciado em {ROUTTER_ADDR}. Aguardando pacotes...")
+try:
+    router_socket.bind(ROUTER_ADDR)
+    router_socket.settimeout(0.5)
+    print(f"\033[93m[ROTEADOR] Iniciado em {ROUTER_ADDR}\033[0m")
+except OSError as e:
+    print(f"\033[91mERRO: Porta 7000 já em uso - {e}\033[0m")
+    print("Rode no CMD: netstat -ano | findstr :7000")
+    print("Depois: taskkill /PID <numero> /F")
+    input("Pressione Enter para sair...")
+    exit(1)
 
 while True:
     try:
-        dados, addr_origem = router_socket.recvfrom(4096)
+        dados, addr = router_socket.recvfrom(4096)
         quadro_dict, integro = Quadro.deserializar(dados)
-    
+        
         if not integro or not quadro_dict:
-            print("\033[91m[ROTEADOR](ERRO DE CRC) Quadro corrompido recebido. Ignorando...")
+            print("\033[91m[ROTEADOR] Quadro corrompido\033[0m")
             continue
-    
+
         pacote_data = quadro_dict['data']
         dst_vip = pacote_data['dst_vip']
-        ttl_atual = pacote_data['ttl']
-    
-        novo_ttl = ttl_atual - 1
-        if novo_ttl <= 0:
-            print(f"\033[91m[ROTEADOR] TTL expirado para destino {dst_vip}. Descartando pacote.\033[0m")
+        ttl = pacote_data['ttl'] - 1
+
+        if ttl <= 0:
+            print(f"\033[91m[ROTEADOR] TTL expirado: {dst_vip}\033[0m")
             continue
-        
+
         if dst_vip in tabela_roteamento:
-            destino_real = tabela_roteamento[dst_vip]
-            pacote_data['ttl'] = novo_ttl
-        
-            novo_quadro = Quadro(
-                src_mac = "MAC_ROUTER",
-                dst_mac = "MAC_NEXT_HOP",
-                pacote_dict =  pacote_data
-            )
-        
-            print(f"\033[93m[ROTEADOR] TRÁFEGO: {pacote_data['src_vip']} -> {dst_vip} | TTL: {novo_ttl}\033[0m")
-            print(f"\033[93m           ENLACE {quadro_dict['src_mac']} -> {novo_quadro.src_mac} (SALTO)\033[0m")
-        
-            enviar_pela_rede_ruidosa(router_socket, novo_quadro.serializar(), destino_real)
-    
+            destino = tabela_roteamento[dst_vip]
+            pacote_data['ttl'] = ttl
+            novo_quadro = Quadro("MAC_ROUTER", "MAC_NEXT_HOP", pacote_data)
+
+            print(f"\033[93m[ROTEADOR] Encaminhando {pacote_data['src_vip']} → {dst_vip} | TTL={ttl}\033[0m")
+            enviar_pela_rede_ruidosa(router_socket, novo_quadro.serializar(), destino)
         else:
-            print(f"\033[91m[ROTEADOR] Destino {dst_vip} desconhecido. Descartando pacote.\033[0m")
-    except Exception as e:
-        print(f"\033[91m[ROTEADOR] Erro inesperado: {e}\033[0m")
+            print(f"\033[91m[ROTEADOR] Destino desconhecido: {dst_vip}\033[0m")
+
+    except socket.timeout:
         continue
+    except Exception as e:
+        print(f"\033[91m[ROTEADOR] Erro: {e}\033[0m")

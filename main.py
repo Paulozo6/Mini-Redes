@@ -1,30 +1,45 @@
 import subprocess
 import time
 import sys
-
+import os
 
 def iniciar():
-    print("-----Iniciando Simulação Mini-NET-----")
+    print("----- Iniciando Simulação Mini-NET (apenas 1 Cliente) -----")
     
-    print("[SISTEMA] Iniciando roteador em nova janela...")
-    subprocess.Popen("start cmd /k \"title Roteador & python router.py\"", shell=True)
-    time.sleep(1)  # Aguarda o roteador iniciar
+    processos = []
     
+    # Roteador
+    print("[SISTEMA] Iniciando roteador...")
+    p_router = subprocess.Popen('start cmd /k "title ROTEADOR & python router.py"', shell=True)
+    processos.append(p_router.pid)
+    time.sleep(3.0)
+    
+    # Servidor
     print("[SISTEMA] Iniciando servidor...")
-    subprocess.Popen("start cmd /k \"title Servidor & python server.py\"", shell=True)
-    time.sleep(1)  # Aguarda o servidor iniciar
+    p_server = subprocess.Popen('start cmd /k "title SERVIDOR & python server.py"', shell=True)
+    processos.append(p_server.pid)
+    time.sleep(2.0)
     
-    print("[SISTEMA] Iniciando cliente 1")
-    subprocess.Popen("start cmd /k \"title Cliente 1 & python client.py\"", shell=True)
-    time.sleep(1)  # Aguarda o cliente iniciar
+    # Cliente único
+    print("[SISTEMA] Iniciando cliente...")
+    p_client = subprocess.Popen('start cmd /k "title CLIENTE & python client.py"', shell=True)
+    processos.append(p_client.pid)
     
-    print("[SISTEMA] Iniciando cliente 2")
     print("----------------------------------------")
+    print("Simulação iniciada. Para parar: Ctrl+C aqui ou feche as janelas.")
+    print("PIDs:", processos)
+    
     try:
-        subprocess.run([sys.executable, "client.py"])
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
-        print("\n[SISTEMA] Encerrando simulação...")
+        print("\n[SISTEMA] Encerrando...")
+        for pid in processos:
+            try:
+                os.system(f"taskkill /PID {pid} /F >nul 2>&1")
+            except:
+                pass
         sys.exit(0)
+
 if __name__ == "__main__":
     iniciar()
-    

@@ -3,179 +3,222 @@ import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import threading
 import time
-import os
 from protocol import Segmento, Pacote, Quadro, enviar_pela_rede_ruidosa
 
 class ChatCliente:
     def __init__(self, master):
         self.master = master
         self.master.title("Chat Cliente")
-        
-        self.ROUTTER_ADDR = ('127.0.0.1', 7000)
+
+        self.ROUTER_ADDR = ('127.0.0.1', 7000)
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.client_socket.settimeout(2.0)  # Timeout para receber ACKs
+        self.client_socket.settimeout(0.5)
+
         self.seq_num = 0
         self.usuario = None
-        
+        self.vip = None
         self.ack_evento = threading.Event()
+
+        self.TIMEOUT_LOGIN = 8.0
+        self.MAX_TENTATIVAS_LOGIN = 12
+
+        self.TIMEOUT_CHAT_BASE = 10.0
+        self.MAX_TENTATIVAS_CHAT = 25
+
         self.setup_gui()
-        
+
     def setup_gui(self):
         self.login_frame = tk.Frame(self.master)
         self.login_frame.pack(expand=True)
-
-        tk.Label(self.login_frame, text = "Nome de usuário:", fg = "White", bg = "#2c3e50", font = ("Arial", 12)).pack()
-        self.username_entry = tk.Entry(self.login_frame, font = ("Arial", 12))
+        tk.Label(self.login_frame, text="Nome de usuário:", fg="white", bg="#2c3e50", font=("Arial", 12)).pack()
+        self.username_entry = tk.Entry(self.login_frame, font=("Arial", 12))
         self.username_entry.pack(pady=5)
-
         tk.Button(self.login_frame, text="Entrar", command=self.entrar_chat).pack(pady=10)
 
     def entrar_chat(self):
         self.usuario = self.username_entry.get().strip()
         if not self.usuario:
-            messagebox.showerror("Erro", "Por favor, insira um nome de usuário.")
+            messagebox.showerror("Erro", "Digite um nome.")
             return
-        
-        for porta in [6000, 6001]:
+
+        # Bind com tentativa dupla
+        bind_ok = False
+        for porta, vip_name in [(6000, "CLIENTE_1"), (6001, "CLIENTE_2")]:
             try:
                 self.client_socket.bind(('127.0.0.1', porta))
-                self.minha_porta = porta
+                self.vip = vip_name
+                bind_ok = True
                 break
-            except:
-                continue
-        else:
-            messagebox.showerror("Erro", "Todas as portas estão ocupadas. Tente novamente mais tarde.")
+            except OSError:
+                pass
+
+        if not bind_ok:
+            messagebox.showerror("Erro", "Portas 6000 e 6001 ocupadas. Feche outros clientes.")
             return
-        
+
         self.login_frame.pack_forget()
         self.setup_chat_gui()
-        
-        escuta = threading.Thread(target=self.receber_mensagens, daemon=True)
-        escuta.start()
-        time.sleep(0.3)  # Aguarda a thread de escuta iniciar
-        
-        threading.Thread(target=self.enviar_login_servidor, daemon=True).start()
-    
+
+        threading.Thread(target=self.receber_mensagens, daemon=True).start()
+        time.sleep(1.0)  # tempo para tudo estabilizar
+        self.enviar_login()
+
+    def setup_chat_gui(self):
+        self.chat_area = scrolledtext.ScrolledText(self.master, state='disabled', width=50, height=20, font=("Arial", 12))
+        self.chat_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        self.chat_area.tag_config("eu", foreground="blue", font=("Arial", 12, "bold"))
+        self.chat_area.tag_config("sistema", foreground="orange", font=("Arial", 12, "bold"))
+        self.chat_area.tag_config("enviando", foreground="gray", font=("Arial", 11, "italic"))
+        self.chat_area.tag_config("conectando", foreground="purple", font=("Arial", 11, "italic"))
+
+        self.message_entry = tk.Entry(self.master, font=("Arial", 12))
+        self.message_entry.pack(padx=10, pady=5, fill=tk.X)
+        self.message_entry.bind("<Return>", lambda e: self.enviar_mensagem())
+        tk.Button(self.master, text="Enviar", command=self.enviar_mensagem).pack(pady=5)
+
+    def exibir_mensagem(self, texto, tag="sistema"):
+        self.chat_area.config(state='normal')
+        self.chat_area.insert(tk.END, f"{texto}\n", tag)
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
+    def enviar_login(self):
+        dados_app = {
+            "type": "login",
+            "sender": self.usuario,
+            "message": f"{self.usuario} entrou no chat",
+            "timestamp": time.time()
+        }
+        seg = Segmento(self.seq_num, is_ack=False, payload=dados_app)
+        pac = Pacote(self.vip, "SERVIDOR", 128, seg.to_dict())
+        qua = Quadro("00:11", "22:33", pac.to_dict())
+
+        self.ack_evento.clear()
+        tentativas = 0
+        linha = self.chat_area.index(tk.END)
+        self.exibir_mensagem("Conectando ao servidor...", "conectando")
+
+        while tentativas < self.MAX_TENTATIVAS_LOGIN:
+            self._atualizar_login(linha, tentativas + 1)
+            enviar_pela_rede_ruidosa(self.client_socket, qua.serializar(), self.ROUTER_ADDR)
+
+            if self.ack_evento.wait(timeout=self.TIMEOUT_LOGIN):
+                self.seq_num = 1 - self.seq_num
+                self._sucesso_login(linha)
+                return
+
+            tentativas += 1
+            time.sleep(0.5)
+
+        self._falha_login(linha)
+
+    def _atualizar_login(self, linha, tentativa):
+        texto = f"Conectando ao servidor... (tentativa {tentativa}/{self.MAX_TENTATIVAS_LOGIN})"
+        self.chat_area.config(state='normal')
+        self.chat_area.delete(linha, f"{linha} lineend")
+        self.chat_area.insert(linha, texto + "\n", "conectando")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
+    def _sucesso_login(self, linha):
+        self.chat_area.config(state='normal')
+        self.chat_area.delete(linha, f"{linha} lineend + 1 lines")
+        self.chat_area.insert(linha, "Conexão estabelecida!\n", "sistema")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
+    def _falha_login(self, linha):
+        self.chat_area.config(state='normal')
+        self.chat_area.delete(linha, f"{linha} lineend + 1 lines")
+        self.chat_area.insert(linha, "→ Falha na conexão inicial (timeout)\n", "sistema")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
+    def enviar_mensagem(self):
+        msg = self.message_entry.get().strip()
+        if not msg:
+            return
+
+        linha = self.chat_area.index(tk.END)
+        self.exibir_mensagem(f"Você: {msg}  [enviando...]", "enviando")
+        self.message_entry.delete(0, tk.END)
+
+        threading.Thread(target=self._enviar_chat, args=(msg, linha), daemon=True).start()
+
+    def _enviar_chat(self, msg, linha):
+        dados_app = {"type": "chat", "sender": self.usuario, "message": msg, "timestamp": time.time()}
+        seg = Segmento(self.seq_num, is_ack=False, payload=dados_app)
+        pac = Pacote(self.vip, "SERVIDOR", 128, seg.to_dict())
+        qua = Quadro("00:11", "22:33", pac.to_dict())
+
+        self.ack_evento.clear()
+        tentativas = 0
+        timeout = self.TIMEOUT_CHAT_BASE
+
+        while tentativas < self.MAX_TENTATIVAS_CHAT:
+            self._atualizar_chat(linha, msg, tentativas + 1)
+            enviar_pela_rede_ruidosa(self.client_socket, qua.serializar(), self.ROUTER_ADDR)
+
+            if self.ack_evento.wait(timeout=timeout):
+                self.seq_num = 1 - self.seq_num
+                self._sucesso_chat(linha, msg)
+                return
+
+            tentativas += 1
+            timeout = min(timeout * 1.3, 25.0)
+
+        self._falha_chat(linha)
+
+    def _atualizar_chat(self, linha, msg, tentativa):
+        texto = f"Você: {msg}  [tent {tentativa}/{self.MAX_TENTATIVAS_CHAT}]"
+        self.chat_area.config(state='normal')
+        self.chat_area.delete(linha, f"{linha} lineend")
+        self.chat_area.insert(linha, texto, "enviando")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
+    def _sucesso_chat(self, linha, msg):
+        self.chat_area.config(state='normal')
+        self.chat_area.delete(linha, f"{linha} lineend + 1 lines")
+        self.chat_area.insert(linha, f"Você: {msg}\n", "eu")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
+    def _falha_chat(self, linha):
+        self.chat_area.config(state='normal')
+        self.chat_area.delete(linha, f"{linha} lineend + 1 lines")
+        self.chat_area.insert(linha, "→ Mensagem não chegou (timeout)\n", "sistema")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview(tk.END)
+
     def receber_mensagens(self):
         while True:
             try:
                 dados, _ = self.client_socket.recvfrom(4096)
                 quadro_dict, integro = Quadro.deserializar(dados)
-                
                 if not integro or not quadro_dict:
-                    continue  # Ignora quadros corrompidos ou vazios
-                
+                    continue
+
                 pacote = quadro_dict['data']
                 segmento = pacote['data']
-                vip_origem = pacote['src_vip']                
-                
-                if segmento.get('is_ack') and segmento.get('seq_num') == self.seq_num:
-                    print('\033[92m[ACK RECEBIDO]!\033[0m')
-                    self.ack_evento.set()
-                    continue
-                else:
-                    payload = segmento.get('payload', {})
-                    remetente = payload.get('sender', 'Desconecido')
-                    mensagem = payload.get('message', '')
-                        
-                    if remetente == "SISTEMA":
-                        self.exibir_mensagem(mensagem, "sistema")
-                    elif remetente != self.usuario:
-                        self.exibir_mensagem(f"{remetente}: {mensagem}", "outro")
-            except:
-                continue
-    
-    def setup_chat_gui(self):
-        self.chat_area = scrolledtext.ScrolledText(self.master, state='disabled', width=50, height=20, font=("Arial", 12))
-        self.chat_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+                seq_recebido = segmento.get('seq_num')
 
-        self.chat_area.config(bg = "#f0f2f5", fg = "#2c3e50", insertbackground = "#2c3e50")
-        
-        self.chat_area.tag_config("eu", foreground = "blue", font = ("Arial", 12, "bold"))
-        self.chat_area.tag_config("outro", foreground = "green", font = ("Arial", 12))
-        self.chat_area.tag_config("historico", foreground = "gray", font = ("Arial", 10, "italic"))
-        self.chat_area.tag_config("sistema", foreground = "orange", font = ("Arial", 12, "bold"))
-        
-        self.message_entry = tk.Entry(self.master, font = ("Arial", 12))
-        self.message_entry.pack(padx=10, pady=5, fill=tk.X)
-        self.message_entry.bind("<Return>", lambda event: self.enviar_mensagem())
-    
-        self.send_button = tk.Button(self.master, text="Enviar", command=self.enviar_mensagem)
-        self.send_button.pack(pady=5)
-    
-    def exibir_mensagem(self, mensagem, tipo_tag = "sistema"):
-        self.chat_area.config(state='normal')
-        self.chat_area.insert(tk.END, f"{mensagem}\n", tipo_tag)
-        self.chat_area.config(state='disabled')
-        self.chat_area.yview(tk.END)
-    
-    def enviar_mensagem(self):
-        mensagem = self.message_entry.get()
-        if not mensagem:
-            return
-        self.message_entry.delete(0, tk.END)
-    
-        threading.Thread(target=self.enviar_mensagem_rede, args=(mensagem,), daemon = True).start()
-    
-    def enviar_mensagem_rede(self, mensagem, tipo = "chat"):
-        meu_vip = "CLIENTE_1" if self.minha_porta == 6000 else "CLIENTE_2"
-        dados_app = {
-            "type" : tipo,
-            "sender" : self.usuario,
-            "message" : mensagem,
-            "timestamp" : time.time()
-        }   
-    
-        seg = Segmento(self.seq_num, is_ack = False, payload = dados_app)
-        pac = Pacote(
-            src_vip=meu_vip,
-            dst_vip = "SERVIDOR",
-            ttl = 64,
-            segmento_dict = seg.to_dict()
-        )
-    
-        qua = Quadro(src_mac = "00:11", dst_mac = "22:33", pacote_dict = pac.to_dict())
-    
-        bytes_enviar = qua.serializar()
-        
-        self.ack_evento.clear()
-        
-        while True:
-            print(f"Enviando Seq {self.seq_num}...")
-            enviar_pela_rede_ruidosa(self.client_socket, bytes_enviar, self.ROUTTER_ADDR)
-        
-            if self.ack_evento.wait(timeout=2.0):
-                print(f"\033[92m[ENTREGUE]!\033[0m")
-                if tipo != "login":
-                    self.exibir_mensagem(f"{self.usuario} (Você): {mensagem}", "eu")
-                self.seq_num = 1 - self.seq_num  # Alterna entre 0 e 1
-                break
-            else:
-                print(f"\033[91m[Falha na rede] Timeout! Reenviando....\033[0m")
-    
-    def enviar_login_servidor(self):
-        meu_vip = "CLIENTE_1" if self.minha_porta == 6000 else "CLIENTE_2"
-        dados_app = {
-            "type" : "login",
-            "sender" : self.usuario,
-            "message" : f"{self.usuario} entrou no chat",
-            "timestamp" : time.time()
-        }
-        
-        seg = Segmento(self.seq_num, is_ack = False, payload = dados_app)
-        pac = Pacote(
-            src_vip=meu_vip,
-            dst_vip = "SERVIDOR",
-            ttl = 64,
-            segmento_dict = seg.to_dict()
-        )
-        qua = Quadro(src_mac = "00:11", dst_mac = "22:33", pacote_dict = pac.to_dict())
-        
-        print(f"Enviando login do usuário {self.usuario} para o servidor...")
-        enviar_pela_rede_ruidosa(self.client_socket, qua.serializar(), self.ROUTTER_ADDR)
+                if segmento.get('is_ack'):
+                    if seq_recebido == self.seq_num:
+                        self.ack_evento.set()
+                    continue
+
+                # Se o servidor enviar algo de volta (opcional)
+                payload = segmento.get('payload', {})
+                if payload.get('type') == 'login':
+                    self.exibir_mensagem(payload.get('message'), "sistema")
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                print(f"[CLIENTE] Erro recv: {e}")
 
 if __name__ == "__main__":
-    import os
     root = tk.Tk()
     app = ChatCliente(root)
     root.mainloop()
