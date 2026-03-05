@@ -25,13 +25,3 @@ Cada camada é simulada:
 ```bash
 python main.py
 ```
-
-## 🎥 Vídeo de Demonstração
-
-O vídeo abaixo mostra a execução do Mini-NET, incluindo:
-- Inicialização do roteador, servidor e cliente
-- Envio de mensagens no chat
-- Funcionamento do ACK e retransmissão
-
-👉 Link: https://youtu.be/SEU_LINK
-https://youtube.com/shorts/gp97_Z55sQc?feature=share
